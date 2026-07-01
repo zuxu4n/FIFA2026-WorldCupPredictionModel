@@ -1,4 +1,4 @@
-# World Cup Predictor — XGBoost Poisson expected goals → W/D/L odds
+# World Cup Predictor: XGBoost Poisson expected goals → W/D/L odds
 
 Predicts international football matches by modelling **expected goals for each
 side** with gradient-boosted trees (`xgboost`, `count:poisson` objective), then
