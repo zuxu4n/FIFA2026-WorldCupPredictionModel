@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# large/generated artifacts
+data/raw/*.csv
+models/*.json
+outputs/*.csv
+
+# keep curated reference data and folder structure
+!data/reference/*.csv
+!.gitkeep
