@@ -18,7 +18,8 @@ import pandas as pd
 from . import config as C
 from . import data as D
 from .predict import knockout_advance, predict_lambdas
-from .simulate import current_standings, remaining_group_fixtures, _sample_scoreline
+from .simulate import (current_standings, remaining_group_fixtures,
+                       _sample_scoreline, KNOCKOUT_START)
 
 FINALS_TXT = os.path.join(C.DATA_REF, "wc2026_finals.txt")
 GROUPS_CSV = os.path.join(C.DATA_REF, "wc2026_groups_official.csv")
@@ -124,8 +125,19 @@ def third_slots(bracket: dict[int, BracketMatch]) -> list[tuple[int, str, frozen
     return slots
 
 
-def _match_thirds(slots, qualified: set[str], rng) -> dict[tuple[int, str], str]:
-    """Bipartite-match qualifying third-place groups to eligible slots (Kuhn's)."""
+def _match_thirds(slots, qualified: set[str], rng,
+                  pinned: dict | None = None) -> dict[tuple[int, str], str]:
+    """Bipartite-match qualifying third-place groups to eligible slots (Kuhn's).
+
+    `pinned` maps (match_no, side) -> group for slots whose real assignment is
+    already known from played matches; those are fixed and excluded from the
+    matching, along with their groups.
+    """
+    pinned = pinned or {}
+    fixed = {k: g for k, g in pinned.items()}
+    used_groups = set(fixed.values())
+    slots = [s for s in slots if (s[0], s[1]) not in fixed]
+    qualified = set(qualified) - used_groups
     order = list(range(len(slots)))
     rng.shuffle(order)               # randomise to vary among valid assignments
     groups = list(qualified)
@@ -151,7 +163,96 @@ def _match_thirds(slots, qualified: set[str], rng) -> dict[tuple[int, str], str]
     for si in order:
         if si not in used_slots and leftover_groups:
             match_slot_to_group[si] = leftover_groups.pop()
-    return {(slots[si][0], slots[si][1]): g for si, g in match_slot_to_group.items()}
+    out = {(slots[si][0], slots[si][1]): g for si, g in match_slot_to_group.items()}
+    out.update(fixed)
+    return out
+
+
+def _shootout_winners() -> dict:
+    """(date, frozenset(team pair)) -> winner, from shootouts.csv if present."""
+    if not os.path.exists(C.SHOOTOUTS_CSV):
+        return {}
+    s = pd.read_csv(C.SHOOTOUTS_CSV, encoding="utf-8")
+    s["date"] = pd.to_datetime(s["date"], errors="coerce")
+    for col in ("home_team", "away_team", "winner"):
+        s[col] = s[col].astype(str).map(D.strip_accents)
+    return {(r.date, frozenset((r.home_team, r.away_team))): r.winner
+            for r in s.itertuples(index=False)}
+
+
+R16_START = pd.Timestamp("2026-07-04")
+
+
+def played_knockouts(results: pd.DataFrame) -> dict:
+    """frozenset(team pair) -> (winner, date) for completed knockout matches.
+
+    Draws (after extra time) are resolved via shootouts.csv; if the shootout
+    winner is unknown the match is left to the simulator.
+    """
+    f = results[(results.tournament == C.WC_TOURNAMENT_NAME)
+                & results.played & (results.date >= KNOCKOUT_START)]
+    so = _shootout_winners() if (f.home_score == f.away_score).any() else {}
+    lock = {}
+    for r in f.itertuples(index=False):
+        pair = frozenset((r.home_team, r.away_team))
+        if r.home_score > r.away_score:
+            w = r.home_team
+        elif r.away_score > r.home_score:
+            w = r.away_team
+        else:
+            w = so.get((r.date, pair))
+            if w is None or w not in pair:
+                continue
+        lock[pair] = (w, r.date)
+    return lock
+
+
+def det_order(ts, st):
+    """Deterministic group ordering: pts, gd, gf, then name (name only breaks
+    exact ties; FIFA uses head-to-head/fair-play there — rare and unknowable)."""
+    return sorted(ts, key=lambda t: (st[t]["pts"], st[t]["gd"], st[t]["gf"], t),
+                  reverse=True)
+
+
+def fixed_group_phase(results, groups, bracket, tslots):
+    """When the group stage is complete, positions are deterministic and the
+    scheduled/played R32 fixtures reveal the real third-slot assignments.
+
+    Returns (winners, runners, thirds, best8, pin_slot) or None if incomplete.
+    """
+    from .simulate import current_standings, _group_stage
+    st = current_standings(results, groups)
+    teams = [t for ts in groups.values() for t in ts]
+    if any(st[t]["played"] < 3 for t in teams):
+        return None
+    winners, runners, thirds = {}, {}, {}
+    for g, ts in groups.items():
+        o = det_order(ts, st)
+        winners[g], runners[g], thirds[g] = o[0], o[1], o[2]
+    ranked = sorted(thirds, key=lambda g: (st[thirds[g]]["pts"], st[thirds[g]]["gd"],
+                                           st[thirds[g]]["gf"], thirds[g]),
+                    reverse=True)
+    best8 = ranked[:8]
+
+    # pin third slots from all KO-window fixtures (played or scheduled)
+    ko = results[(results.tournament == C.WC_TOURNAMENT_NAME)
+                 & (results.date >= KNOCKOUT_START) & (results.date < R16_START)]
+    pairs = [frozenset((r.home_team, r.away_team)) for r in ko.itertuples(index=False)]
+    pin_slot = {}
+    for no, side, elig in tslots:
+        bm = bracket[no]
+        other_ref = bm.right if side == "left" else bm.left
+        if other_ref.kind != "pos":
+            continue
+        other_team = (winners if other_ref.place == 1 else runners)[other_ref.group]
+        for pair in pairs:
+            if other_team in pair:
+                partner = next(t for t in pair if t != other_team)
+                for g in elig:
+                    if g in best8 and thirds[g] == partner:
+                        pin_slot[(no, side)] = g
+                        break
+    return winners, runners, thirds, best8, pin_slot
 
 
 def simulate_official(booster, world, results: pd.DataFrame, n_sims: int = 5000,
@@ -162,6 +263,8 @@ def simulate_official(booster, world, results: pd.DataFrame, n_sims: int = 5000,
     tslots = third_slots(bracket)
     base = current_standings(results, groups)
     rem = remaining_group_fixtures(results, groups, booster, world)
+    ko_lock = played_knockouts(results)   # completed KO results are fixed
+    fixed = fixed_group_phase(results, groups, bracket, tslots)
     teams = [t for ts in groups.values() for t in ts]
     team_group = {t: g for g, ts in groups.items() for t in ts}
     order = sorted(bracket)
@@ -191,14 +294,21 @@ def simulate_official(booster, world, results: pd.DataFrame, n_sims: int = 5000,
                 s["gf"] += f_; s["ga"] += a_; s["gd"] += f_ - a_
                 s["pts"] += 3 if f_ > a_ else (1 if f_ == a_ else 0)
 
-        winners, runners, thirds = {}, {}, {}
-        for g, ts in groups.items():
-            o = sorted(ts, key=lambda t: rank_key(t, st[t]), reverse=True)
-            winners[g], runners[g], thirds[g] = o[0], o[1], o[2]
-            counters[o[0]]["win_group"] += 1
-        best = sorted(thirds, key=lambda g: rank_key(thirds[g], st[thirds[g]]),
-                      reverse=True)[:8]
-        slot_group = _match_thirds(tslots, set(best), rng)
+        if fixed is not None:
+            # group stage complete: deterministic positions + pinned slots
+            winners, runners, thirds, best, pin_slot = fixed
+            winners, runners, thirds = dict(winners), dict(runners), dict(thirds)
+        else:
+            winners, runners, thirds = {}, {}, {}
+            for g, ts in groups.items():
+                o = sorted(ts, key=lambda t: rank_key(t, st[t]), reverse=True)
+                winners[g], runners[g], thirds[g] = o[0], o[1], o[2]
+            best = sorted(thirds, key=lambda g: rank_key(thirds[g], st[thirds[g]]),
+                          reverse=True)[:8]
+            pin_slot = {}
+        for g in groups:
+            counters[winners[g]]["win_group"] += 1
+        slot_group = _match_thirds(tslots, set(best), rng, pinned=pin_slot)
 
         won, lost, parts = {}, {}, defaultdict(set)
 
@@ -216,7 +326,11 @@ def simulate_official(booster, world, results: pd.DataFrame, n_sims: int = 5000,
             a = resolve(bm.left, no, "left")
             b = resolve(bm.right, no, "right")
             parts[ROUND_OF[no]].add(a); parts[ROUND_OF[no]].add(b)
-            if rng.random() < p_adv(a, b, bm.city, bm.country):
+            locked = ko_lock.get(frozenset((a, b)))
+            if locked is not None:                       # already played: fixed
+                wt = locked[0]
+                won[no], lost[no] = wt, (b if wt == a else a)
+            elif rng.random() < p_adv(a, b, bm.city, bm.country):
                 won[no], lost[no] = a, b
             else:
                 won[no], lost[no] = b, a

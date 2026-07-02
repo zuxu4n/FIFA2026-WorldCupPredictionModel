@@ -23,6 +23,9 @@ from .predict import score_matrix, knockout_advance, predict_lambdas
 # --------------------------------------------------------------------------
 # Group reconstruction
 # --------------------------------------------------------------------------
+KNOCKOUT_START = pd.Timestamp("2026-06-28")   # first Round-of-32 date
+
+
 def _finals(results: pd.DataFrame) -> pd.DataFrame:
     f = results[(results.tournament == C.WC_TOURNAMENT_NAME)
                 & (results.date >= pd.Timestamp("2026-06-01"))
@@ -30,9 +33,15 @@ def _finals(results: pd.DataFrame) -> pd.DataFrame:
     return f.copy()
 
 
+def _group_stage(results: pd.DataFrame) -> pd.DataFrame:
+    """Finals matches from the group stage only (before the knockout rounds)."""
+    f = _finals(results)
+    return f[f.date < KNOCKOUT_START]
+
+
 def reconstruct_groups(results: pd.DataFrame) -> dict[str, list[str]]:
     """Union-find over the group fixtures -> {group_label: [4 teams]}."""
-    f = _finals(results)
+    f = _group_stage(results)
     parent: dict[str, str] = {}
 
     def find(x):
@@ -55,8 +64,9 @@ def reconstruct_groups(results: pd.DataFrame) -> dict[str, list[str]]:
 
 
 def current_standings(results: pd.DataFrame, groups: dict[str, list[str]]):
-    """Return {team: dict(pts, gd, gf, ga, played)} from PLAYED finals matches."""
-    f = _finals(results)
+    """Return {team: dict(pts, gd, gf, ga, played)} from PLAYED group-stage matches
+    (knockout results must not pollute group tables)."""
+    f = _group_stage(results)
     st = {t: {"pts": 0, "gd": 0, "gf": 0, "ga": 0, "played": 0}
           for g in groups.values() for t in g}
     for r in f[f.played].itertuples(index=False):
@@ -71,7 +81,7 @@ def current_standings(results: pd.DataFrame, groups: dict[str, list[str]]):
 def remaining_group_fixtures(results: pd.DataFrame, groups: dict[str, list[str]],
                              booster, world):
     """List of dicts: {group, home, away, M(score matrix)} for unplayed games."""
-    f = _finals(results)
+    f = _group_stage(results)
     team_group = {t: g for g, ts in groups.items() for t in ts}
     out = []
     for r in f[~f.played].itertuples(index=False):

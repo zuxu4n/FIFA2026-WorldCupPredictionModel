@@ -21,6 +21,7 @@ import pandas as pd
 from _common import load_everything
 from wcpred import config as C
 from wcpred import data as D
+from wcpred.odds import decimal_to_american as american, devig, ev as _ev, kelly, blend
 from wcpred.predict import predict_fixture
 
 RAW = os.path.join(C.OUTPUTS, "odds_raw.json")
@@ -32,10 +33,6 @@ def norm(t):
     t = t.replace(" & ", " and ")   # "Bosnia & Herzegovina" -> "... and ..."
     t = ALIAS.get(t, t)
     return D.strip_accents(t)
-
-
-def american(d):
-    return f"{round((d-1)*100):+d}" if d >= 2 else f"{round(-100/(d-1)):+d}"
 
 
 def fetch(key, sport, regions, markets):
@@ -59,6 +56,10 @@ def main():
     ap.add_argument("--book", default="fanduel")
     ap.add_argument("--min-ev", type=float, default=0.0, help="flag bets above this EV")
     ap.add_argument("--from-cache", action="store_true")
+    ap.add_argument("--blend", type=float, default=None, metavar="W",
+                    help="also show probabilities blended toward the market "
+                         "(W=model weight, e.g. 0.5); blended EV vs the same "
+                         "book is conservative by construction")
     args = ap.parse_args()
 
     if args.from_cache and os.path.exists(RAW):
@@ -92,9 +93,7 @@ def main():
         if fh not in price or fa not in price or "Draw" not in price:
             skipped.append(f"{ev['home_team']} v {ev['away_team']} (odds/team mismatch)")
             continue
-        inv = {k: 1 / v for k, v in price.items()}
-        over = sum(inv.values())
-        fair = {k: inv[k] / over for k in price}       # de-vigged market prob
+        fair = devig(price)                            # de-vigged market prob
 
         # predict with the REAL fixture (correct spelling, venue, host/neutral)
         p = predict_fixture(booster, world, f.home_team, f.away_team,
@@ -104,14 +103,18 @@ def main():
 
         for sel in (fh, "Draw", fa):
             d = price[sel]; pm = model[sel]
-            ev_ = pm * d - 1
-            kelly = (pm * d - 1) / (d - 1) if d > 1 else 0
-            rows.append({
+            row = {
                 "match": f"{fh} v {fa}", "venue": f.city, "selection": sel,
                 "FD": american(d), "dec": round(d, 2),
                 "model%": round(pm * 100, 1), "fair%": round(fair[sel] * 100, 1),
-                "EV%": round(ev_ * 100, 1), "kelly%": round(max(kelly, 0) * 100, 1),
-            })
+                "EV%": round(_ev(pm, d) * 100, 1),
+                "kelly%": round(kelly(pm, d) * 100, 1),
+            }
+            if args.blend is not None:
+                pb = float(blend(pm, fair[sel], args.blend))
+                row["blend%"] = round(pb * 100, 1)
+                row["blendEV%"] = round(_ev(pb, d) * 100, 1)
+            rows.append(row)
     if skipped:
         print("skipped (not a recognised upcoming WC2026 fixture, or no odds):")
         for s in skipped:

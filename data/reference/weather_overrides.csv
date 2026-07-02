@@ -1,0 +1,13 @@
+date,city,country,temp_c,humidity
+2026-07-01,Atlanta,United States,35.2,75
+2026-07-01,Seattle,United States,17.6,77
+2026-07-01,Santa Clara,United States,22.7,73
+2026-07-02,Inglewood,United States,22.7,80
+2026-07-02,Toronto,Canada,35.5,78
+2026-07-02,Vancouver,Canada,16.3,86
+2026-07-03,Arlington,United States,36.8,54
+2026-07-03,Miami Gardens,United States,30.5,83
+2026-07-03,Kansas City,United States,36.7,61
+2026-07-04,Houston,United States,36.4,62
+2026-07-04,Philadelphia,United States,38.8,53
+2026-07-05,East Rutherford,United States,33.0,58

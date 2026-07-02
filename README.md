@@ -34,6 +34,7 @@ results + Elo + form + FIFA rank + market value + host + altitude
 | Squad age | openfootball rosters (all WCs) | avg squad age team/opp/diff, joined per tournament year (leak-free) |
 | Home / host | dataset `neutral` + `country` | `is_home`, `is_neutral`, `at_home_country` (host-nation bump even in "neutral" WC games) |
 | Altitude | curated venue/team elevations | match altitude, team's home altitude, **altitude gain** (acclimatisation) |
+| Heat & humidity | curated team/venue climate | match temp/humidity, **heat gain** (match temp vs team's home climate) |
 | Match importance | `tournament` column | friendly→WC weighting (feature **and** sample weight) |
 | Confederation | curated | team/opponent confederation, same-confederation flag |
 
@@ -81,15 +82,48 @@ with the **Dixon-Coles** low-score correction (parameter `ρ`) that fixes the
 triangle and diagonal gives win/draw/loss. Knockout advancement adds a 30-minute
 extra-time matrix and a penalty coin-flip.
 
+## Calibration stack
+
+Fitted on out-of-sample history (`python scripts/calibrate.py`), applied
+automatically at prediction time:
+
+- **Lambda (totals) shrinkage** per match segment (knockout / tournament group /
+  qualifier / other) — corrects the systematic goal over-prediction a raw
+  Poisson model shows in tournament football (`models/totals_calibrator.json`).
+- **Fitted Dixon-Coles rho** (profile likelihood) instead of a hardcoded value.
+- **W/D/L recalibration is self-disabling**: it is only deployed if it beats the
+  raw pipeline on cross-validated log-loss (currently it does not — raw wins).
+- A **knockout-stage feature** (`is_knockout`, `days_into_comp`) lets the model
+  itself learn that knockout games are lower-scoring.
+
 ## Validation
 
-Time-based split (train < 2023, validate ≥ 2023, ~3.6k matches):
+Rolling-origin folds (`python scripts/validate.py`), each trained strictly on
+earlier data:
 
-- **W/D/L log-loss ≈ 0.86** (random = 1.099)
-- **Outcome accuracy ≈ 61%**
-- Poisson neg-log-likelihood ≈ 1.42
+| fold | n | W/D/L log-loss | accuracy |
+|---|---|---|---|
+| 2020–21 | 1,462 | 0.833 | 62.1% |
+| 2022–23 | 2,024 | 0.883 | 60.3% |
+| 2024–26 | 2,544 | 0.862 | 60.5% |
+| WC2026 so far | 79 | 0.879 | **63.3%** |
 
-The deployed model is then refit on all data through today.
+(random log-loss = 1.099). `scripts/backtest.py` reproduces the WC2026 fold;
+`scripts/backtest_totals.py` reports the goal-total bias per segment.
+
+## Betting tooling (informational — no proven edge vs sharp books)
+
+- `scripts/fetch_odds.py` — live odds (The Odds API), de-vig, EV/Kelly per
+  selection, `--blend 0.5` for market-shrunk probabilities.
+- `scripts/predict_props.py` — full derived board (result, advance, totals
+  ladder, team totals, BTTS, handicaps, clean sheets) with `--et` for
+  incl-extra-time markets and `--odds file.csv` for edge columns.
+- `scripts/predict_match.py --why` — SHAP breakdown of what drove each side's
+  expected goals.
+- `scripts/fetch_weather.py` — real kickoff-day forecasts (Open-Meteo) override
+  climate normals for upcoming fixtures.
+- `data/reference/injuries.csv` — list squad value out per team (injuries /
+  suspensions); applied as a market-value reduction at predict time.
 
 ## Project layout
 

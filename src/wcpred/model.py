@@ -106,3 +106,18 @@ def load_model() -> tuple[xgb.Booster, dict]:
 def feature_importance(booster: xgb.Booster, kind: str = "gain") -> list[tuple[str, float]]:
     score = booster.get_score(importance_type=kind)
     return sorted(score.items(), key=lambda kv: kv[1], reverse=True)
+
+
+def explain(booster: xgb.Booster, row: dict) -> list[tuple[str, float, float]]:
+    """Per-feature SHAP contributions for one perspective's expected goals.
+
+    Returns [(feature, contribution_log_lambda, pct_effect_on_goals)] sorted by
+    |contribution|; pct_effect = exp(contrib)-1 (the multiplicative effect this
+    feature has on the team's expected goals vs. the average).
+    """
+    X = np.array([[row[c] for c in FEATURE_COLS]], dtype=float)
+    dm = xgb.DMatrix(X, feature_names=FEATURE_COLS)
+    contribs = booster.predict(dm, pred_contribs=True)[0]  # last entry = bias
+    out = [(FEATURE_COLS[i], float(c), float(np.exp(c) - 1.0))
+           for i, c in enumerate(contribs[:-1]) if abs(c) > 1e-9]
+    return sorted(out, key=lambda t: abs(t[1]), reverse=True)

@@ -25,10 +25,22 @@ def _dc_tau(max_goals: int, lam: float, mu: float, rho: float) -> np.ndarray:
     return np.clip(tau, 1e-6, None)
 
 
+def _resolve_rho(rho):
+    if rho is not None:
+        return rho
+    from . import calibrate as _cal
+    return _cal.fitted_rho()
+
+
 def score_matrix(lam_home: float, lam_away: float,
                  max_goals: int = C.MAX_GOALS,
-                 rho: float = C.DIXON_COLES_RHO) -> np.ndarray:
-    """P[i, j] = Prob(home scores i, away scores j)."""
+                 rho: float | None = None) -> np.ndarray:
+    """P[i, j] = Prob(home scores i, away scores j).
+
+    rho=None uses the fitted Dixon-Coles rho (models/totals_calibrator.json)
+    with the config value as fallback.
+    """
+    rho = _resolve_rho(rho)
     i = np.arange(max_goals + 1)
     ph = poisson.pmf(i, max(lam_home, 1e-6))
     pa = poisson.pmf(i, max(lam_away, 1e-6))
@@ -36,6 +48,25 @@ def score_matrix(lam_home: float, lam_away: float,
     M *= _dc_tau(max_goals, lam_home, lam_away, rho)
     s = M.sum()
     return M / s if s > 0 else M
+
+
+def score_matrix_incl_et(lam_home: float, lam_away: float,
+                         max_goals: int = C.MAX_GOALS,
+                         rho: float | None = None) -> np.ndarray:
+    """Final-score distribution INCLUDING extra time: draws after 90' get a
+    30-minute continuation at 1/3 match rate convolved on top (still-level
+    scores then go to penalties, which don't add goals)."""
+    M = score_matrix(lam_home, lam_away, max_goals, rho)
+    E = score_matrix(lam_home / 3.0, lam_away / 3.0, max_goals, rho)
+    G = 2 * max_goals + 1
+    F = np.zeros((G, G))
+    for i in range(max_goals + 1):
+        for j in range(max_goals + 1):
+            if i != j:
+                F[i, j] += M[i, j]
+            else:
+                F[i:i + max_goals + 1, j:j + max_goals + 1] += M[i, j] * E
+    return F
 
 
 def wdl_from_matrix(M: np.ndarray) -> tuple[float, float, float]:
@@ -53,7 +84,7 @@ def top_scorelines(M: np.ndarray, k: int = 5):
 
 def knockout_advance(lam_home: float, lam_away: float,
                      max_goals: int = C.MAX_GOALS,
-                     rho: float = C.DIXON_COLES_RHO,
+                     rho: float | None = None,
                      pen_home: float = 0.5) -> tuple[float, float]:
     """Probability each side advances in a knockout (90' -> 30' ET -> penalties).
 
@@ -141,7 +172,10 @@ def predict_lambdas(booster, world, home: str, away: str, *,
     X = _feat_matrix([row_home, row_away])
     dm = xgb.DMatrix(X, feature_names=FEATURE_COLS)
     pred = booster.predict(dm)
-    return float(pred[0]), float(pred[1])
+    # fitted per-segment lambda shrinkage (identity if not calibrated)
+    from . import calibrate as _cal
+    return _cal.scale_lambdas(float(pred[0]), float(pred[1]),
+                              importance, row_home["is_knockout"])
 
 
 def predict_fixture(booster, world, home: str, away: str, *,

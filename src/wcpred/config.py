@@ -18,6 +18,8 @@ SHOOTOUTS_CSV = os.path.join(DATA_RAW, "shootouts.csv")
 TEAM_META_CSV = os.path.join(DATA_REF, "team_meta.csv")
 VENUES_CSV = os.path.join(DATA_REF, "venues.csv")
 MARKET_VALUES_CSV = os.path.join(DATA_REF, "market_values.csv")
+TEAM_CLIMATE_CSV = os.path.join(DATA_REF, "team_climate.csv")
+VENUE_CLIMATE_CSV = os.path.join(DATA_REF, "venue_climate.csv")
 FIFA_RANKINGS_CSV = os.path.join(DATA_REF, "fifa_rankings.csv")  # optional
 
 MODEL_PATH = os.path.join(MODELS, "xgb_poisson.json")

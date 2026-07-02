@@ -88,6 +88,25 @@ Joined to matches by tournament year (2014 ages for 2014 matches, 2026 for
 get a value, so it's a weak, low-coverage signal — the model uses it at modest
 importance but it barely moves validation.
 
+## 3c. `reference/injuries.csv`  (optional, manual)
+
+Squad market value currently unavailable per team, in EUR millions:
+
+```
+team,value_out_eur_m,note
+France,180,Mbappe hamstring; Saliba suspended
+```
+
+Applied at predict time by reducing the team's squad-value feature — no retrain
+needed. Clear the rows (keep the header) when players return.
+
+## 3d. `reference/weather_overrides.csv`  (auto-generated)
+
+Real forecast conditions for upcoming fixtures, written by
+`python scripts/fetch_weather.py` (Open-Meteo, free, keyless). The climate
+resolver prefers these per-date values over the seasonal normals. Re-run it
+whenever fixtures change; stale dates are simply never matched.
+
 ## 4. `reference/venues.csv` & `reference/team_meta.csv`  (curated)
 
 - `venues.csv` — `(city, country) → altitude_m`. All 16 WC2026 host venues plus

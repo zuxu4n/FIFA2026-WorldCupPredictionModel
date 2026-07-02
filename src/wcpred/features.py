@@ -27,11 +27,13 @@ FEATURE_COLS = [
     "rank_pts_team", "rank_pts_opp", "rank_pts_diff",
     "is_home", "is_neutral", "at_home_country",
     "alt_match", "team_home_alt", "alt_gain",
+    "temp_match", "team_home_temp", "heat_gain", "humidity_match",
     "team_avg_age", "opp_avg_age", "age_diff",
     "team_gf5", "team_ga5", "team_ppg5", "team_gf10", "team_ga10", "team_ppg10",
     "opp_gf5", "opp_ga5", "opp_ppg5", "opp_gf10", "opp_ga10", "opp_ppg10",
     "team_days_since", "opp_days_since", "team_nprior", "opp_nprior",
     "same_confederation", "confed_team", "confed_opp",
+    "days_into_comp", "is_knockout",
     "importance", "year_frac",
 ]
 
@@ -52,6 +54,10 @@ def _persp_feat(team: dict, opp: dict, ctx: dict) -> "OrderedDict":
     f["at_home_country"] = ctx["at_home_country"]
     f["alt_match"] = ctx["alt_match"]; f["team_home_alt"] = team["alt_home"]
     f["alt_gain"] = ctx["alt_match"] - team["alt_home"]
+    f["temp_match"] = ctx["temp_match"]
+    f["team_home_temp"] = team["home_temp"]
+    f["heat_gain"] = ctx["temp_match"] - team["home_temp"]
+    f["humidity_match"] = ctx["humidity_match"]
     f["team_avg_age"] = team["avg_age"]
     f["opp_avg_age"] = opp["avg_age"]
     f["age_diff"] = team["avg_age"] - opp["avg_age"]
@@ -65,6 +71,8 @@ def _persp_feat(team: dict, opp: dict, ctx: dict) -> "OrderedDict":
     f["team_nprior"] = team["nprior"]; f["opp_nprior"] = opp["nprior"]
     f["same_confederation"] = same_conf
     f["confed_team"] = team["confed"]; f["confed_opp"] = opp["confed"]
+    f["days_into_comp"] = ctx["days_into_comp"]
+    f["is_knockout"] = ctx["is_knockout"]
     f["importance"] = ctx["importance"]; f["year_frac"] = ctx["year_frac"]
     return f
 
@@ -94,6 +102,7 @@ class TeamState:
     mv: float
     rank: float
     alt_home: float
+    home_temp: float
     confed: int
     hist: deque
     last_date: pd.Timestamp | None
@@ -101,7 +110,8 @@ class TeamState:
 
     def strength(self, asof: pd.Timestamp) -> dict:
         d = {"elo": self.elo, "mv": self.mv, "rank": self.rank,
-             "alt_home": self.alt_home, "confed": self.confed}
+             "alt_home": self.alt_home, "home_temp": self.home_temp,
+             "confed": self.confed}
         d.update(_form_means(self.hist))
         d["days"] = (np.nan if self.last_date is None
                      else float((asof - self.last_date).days))
@@ -114,7 +124,10 @@ class FeatureWorld:
     states: dict
     alt: D.AltitudeResolver
     confed: dict
+    clim: "D.ClimateResolver" = None
     squad_age: dict = field(default_factory=dict)
+    comp_starts: dict = field(default_factory=dict)   # (tournament, year) -> first match date
+    injuries: dict = field(default_factory=dict)      # team -> squad value out (EUR m)
     default_confed: int = CONFED_CODE["Other"]
 
     def state(self, team: str) -> TeamState:
@@ -122,23 +135,39 @@ class FeatureWorld:
         if team in self.states:
             return self.states[team]
         # unseen team: neutral defaults
-        return TeamState(C.ELO_START, np.nan, np.nan, 25.0,
+        return TeamState(C.ELO_START, np.nan, np.nan, 25.0, 22.0,
                          self.confed.get(team, self.default_confed),
                          deque(maxlen=max(C.FORM_WINDOWS)), None, 0)
 
     def matchup_row(self, team: str, opp: str, *, city: str, country: str,
                     neutral: bool, importance: float, asof: pd.Timestamp,
-                    is_home: bool) -> dict:
+                    is_home: bool, tournament: str = C.WC_TOURNAMENT_NAME) -> dict:
         ts = self.state(team).strength(asof)
         os_ = self.state(opp).strength(asof)
         ts["avg_age"] = self.squad_age.get((asof.year, D.strip_accents(team)), np.nan)
         os_["avg_age"] = self.squad_age.get((asof.year, D.strip_accents(opp)), np.nan)
+        # availability: reduce squad value by what's injured/suspended out
+        for s, name in ((ts, team), (os_, opp)):
+            out = self.injuries.get(D.strip_accents(name), 0.0)
+            if out and not np.isnan(s["mv"]):
+                s["mv"] = max(s["mv"] - out, 1.0)
         alt_match = self.alt.resolve(city, country, home_team=team if is_home else opp)
+        temp_match, humid_match = self.clim.resolve(city, country,
+                                                    home_team=team if is_home else opp,
+                                                    date=asof)
+        start = self.comp_starts.get((tournament, asof.year))
+        days_ic = (float((asof - start).days)
+                   if start is not None and importance > 1.0 else 0.0)
+        is_ko = float(importance >= 3.0 and days_ic > 14)
         ctx = {
             "is_home": float(is_home and not neutral),
             "is_neutral": float(neutral),
             "at_home_country": float(D.strip_accents(country) == D.strip_accents(team)),
             "alt_match": alt_match,
+            "temp_match": temp_match,
+            "humidity_match": humid_match,
+            "days_into_comp": days_ic,
+            "is_knockout": is_ko,
             "importance": importance,
             "year_frac": asof.year + asof.dayofyear / 365.0,
         }
@@ -177,6 +206,7 @@ def build_world(results: pd.DataFrame) -> tuple[pd.DataFrame, FeatureWorld]:
     mv = D.load_market_values()
     confed = D.team_confederation()
     alt_res = D.AltitudeResolver()
+    clim_res = D.ClimateResolver()
     rankings = D.load_fifa_rankings()
     rank_home, rank_away = _asof_points(results, rankings)
     squad_age = D.load_squad_ages()
@@ -226,20 +256,34 @@ def build_world(results: pd.DataFrame) -> tuple[pd.DataFrame, FeatureWorld]:
     away_alt = np.array([alt_res.team_alt.get(D.strip_accents(t), 25.0) for t in at])
     alt_match = np.array([alt_res.resolve(c, co, hm) for c, co, hm in
                           zip(results["city"], results["country"], ht)])
+    home_temp = np.array([clim_res.team_temp.get(D.strip_accents(t), 22.0) for t in ht])
+    away_temp = np.array([clim_res.team_temp.get(D.strip_accents(t), 22.0) for t in at])
+    _cl = [clim_res.resolve(c, co, hm) for c, co, hm in
+           zip(results["city"], results["country"], ht)]
+    temp_match = np.array([x[0] for x in _cl])
+    humidity_match = np.array([x[1] for x in _cl])
 
     neutral = results["neutral"].to_numpy()
     importance = results["importance"].to_numpy()
     country = results["country"].to_numpy()
     year_frac = dts.dt.year.to_numpy() + dts.dt.dayofyear.to_numpy() / 365.0
     years = dts.dt.year.to_numpy()
+
+    # tournament-stage proxy: days since this competition-instance's first match
+    # (grouped by (tournament, year)); knockout proxy = major tournament + >14 days in.
+    comp_start_series = results.groupby([results["tournament"], dts.dt.year])["date"].transform("min")
+    days_into_comp = (results["date"] - comp_start_series).dt.days.to_numpy(float)
+    days_into_comp[importance <= 1.0] = 0.0          # meaningless for friendlies
+    is_knockout = ((importance >= 3.0) & (days_into_comp > 14)).astype(float)
+    comp_starts = results.groupby([results["tournament"], dts.dt.year])["date"].min().to_dict()
     home_age = np.array([squad_age.get((int(y), D.strip_accents(t)), np.nan)
                          for y, t in zip(years, ht)])
     away_age = np.array([squad_age.get((int(y), D.strip_accents(t)), np.nan)
                          for y, t in zip(years, at)])
 
-    def side_state(side, teams, elo, mvv, rankv, altv, confv, agev):
+    def side_state(side, teams, elo, mvv, rankv, altv, tempv, confv, agev):
         s = {"elo": elo, "mv": mvv, "rank": rankv, "alt_home": altv,
-             "confed": confv, "avg_age": agev}
+             "home_temp": tempv, "confed": confv, "avg_age": agev}
         for k in arr[side]:
             if k == "nprior":
                 s["nprior"] = arr[side]["nprior"]
@@ -249,20 +293,26 @@ def build_world(results: pd.DataFrame) -> tuple[pd.DataFrame, FeatureWorld]:
                 s[k] = arr[side][k]
         return s
 
-    home_state = side_state("h", ht, pre_home, home_mv, rank_home, home_alt, home_confed, home_age)
-    away_state = side_state("a", at, pre_away, away_mv, rank_away, away_alt, away_confed, away_age)
+    home_state = side_state("h", ht, pre_home, home_mv, rank_home, home_alt, home_temp, home_confed, home_age)
+    away_state = side_state("a", at, pre_away, away_mv, rank_away, away_alt, away_temp, away_confed, away_age)
 
     base_ctx_home = {
         "is_home": (~neutral).astype(float), "is_neutral": neutral.astype(float),
         "at_home_country": np.array([float(D.strip_accents(co) == D.strip_accents(t))
                                      for co, t in zip(country, ht)]),
-        "alt_match": alt_match, "importance": importance, "year_frac": year_frac,
+        "alt_match": alt_match, "temp_match": temp_match,
+        "humidity_match": humidity_match,
+        "days_into_comp": days_into_comp, "is_knockout": is_knockout,
+        "importance": importance, "year_frac": year_frac,
     }
     base_ctx_away = {
         "is_home": np.zeros(n), "is_neutral": neutral.astype(float),
         "at_home_country": np.array([float(D.strip_accents(co) == D.strip_accents(t))
                                      for co, t in zip(country, at)]),
-        "alt_match": alt_match, "importance": importance, "year_frac": year_frac,
+        "alt_match": alt_match, "temp_match": temp_match,
+        "humidity_match": humidity_match,
+        "days_into_comp": days_into_comp, "is_knockout": is_knockout,
+        "importance": importance, "year_frac": year_frac,
     }
 
     feat_home = _persp_feat(home_state, away_state, base_ctx_home)
@@ -296,6 +346,7 @@ def build_world(results: pd.DataFrame) -> tuple[pd.DataFrame, FeatureWorld]:
             mv=mv.get(t, np.nan),
             rank=np.nan,  # latest rank filled below if available
             alt_home=alt_res.team_alt.get(D.strip_accents(t), 25.0),
+            home_temp=clim_res.team_temp.get(D.strip_accents(t), 22.0),
             confed=confed_code_map.get(t, 6),
             hist=hist.get(t, deque(maxlen=W)),
             last_date=last_date.get(t),
@@ -308,5 +359,6 @@ def build_world(results: pd.DataFrame) -> tuple[pd.DataFrame, FeatureWorld]:
                 s.rank = float(latest[t])
 
     world = FeatureWorld(states=states, alt=alt_res, confed=confed_code_map,
-                         squad_age=squad_age)
+                         clim=clim_res, squad_age=squad_age, comp_starts=comp_starts,
+                         injuries=D.load_injuries())
     return long, world

@@ -124,6 +124,78 @@ MARKET_VALUES: dict[str, int] = {
 }
 
 
+# --- team home climate (typical match-day conditions) ---------------------
+# APPROXIMATE warm-season temperature (C) and relative humidity (%) of each
+# team's home region — their acclimatisation baseline. Also used as the climate
+# of a match *played* in that country (team name ~= country), with WC2026 venue
+# overrides below. Note high-altitude "home" cities stay mild (Quito, La Paz,
+# Mexico City, Johannesburg) even near the equator.
+TEAM_CLIMATE: dict[str, tuple[int, int]] = {
+    "Argentina": (24, 60), "Bolivia": (18, 45), "Brazil": (28, 70),
+    "Chile": (20, 60), "Colombia": (24, 65), "Ecuador": (18, 75),
+    "Paraguay": (28, 60), "Peru": (20, 80), "Uruguay": (22, 70),
+    "Venezuela": (28, 75),
+    "Canada": (20, 60), "Mexico": (22, 50), "United States": (26, 60),
+    "Panama": (30, 80), "Haiti": (30, 75), "Curacao": (29, 75),
+    "Costa Rica": (24, 80), "Jamaica": (30, 75), "Honduras": (28, 70),
+    "Austria": (22, 60), "Belgium": (19, 70), "Bosnia and Herzegovina": (24, 55),
+    "Croatia": (26, 60), "Czech Republic": (21, 60), "England": (18, 70),
+    "France": (23, 60), "Germany": (21, 65), "Netherlands": (19, 75),
+    "Norway": (17, 70), "Portugal": (26, 60), "Scotland": (16, 75),
+    "Spain": (30, 40), "Sweden": (19, 65), "Switzerland": (22, 65),
+    "Turkey": (28, 55), "Italy": (28, 60), "Poland": (21, 65),
+    "Denmark": (19, 70), "Serbia": (24, 55), "Wales": (17, 75), "Ukraine": (23, 60),
+    "Algeria": (30, 50), "Cape Verde": (27, 70), "DR Congo": (30, 75),
+    "Egypt": (33, 45), "Ghana": (30, 80), "Ivory Coast": (30, 80),
+    "Morocco": (28, 55), "Senegal": (30, 70), "South Africa": (22, 55),
+    "Tunisia": (32, 55), "Nigeria": (31, 75), "Cameroon": (29, 80),
+    "Australia": (24, 55), "Iran": (33, 30), "Iraq": (40, 25),
+    "Japan": (28, 70), "Jordan": (30, 40), "Qatar": (40, 60),
+    "Saudi Arabia": (38, 35), "South Korea": (27, 70), "Uzbekistan": (33, 40),
+    "China PR": (28, 65), "New Zealand": (18, 70),
+}
+
+# --- WC2026 host-venue coordinates (for live weather lookups) --------------
+VENUE_COORDS: dict[tuple[str, str], tuple[float, float]] = {
+    ("Arlington", "United States"): (32.75, -97.08),
+    ("Atlanta", "United States"): (33.76, -84.40),
+    ("East Rutherford", "United States"): (40.81, -74.07),
+    ("Foxborough", "United States"): (42.09, -71.26),
+    ("Houston", "United States"): (29.68, -95.41),
+    ("Inglewood", "United States"): (33.95, -118.34),
+    ("Kansas City", "United States"): (39.05, -94.48),
+    ("Miami Gardens", "United States"): (25.96, -80.24),
+    ("Philadelphia", "United States"): (39.90, -75.17),
+    ("Santa Clara", "United States"): (37.40, -121.97),
+    ("Seattle", "United States"): (47.60, -122.33),
+    ("Toronto", "Canada"): (43.63, -79.42),
+    ("Vancouver", "Canada"): (49.28, -123.11),
+    ("Mexico City", "Mexico"): (19.30, -99.15),
+    ("Guadalupe", "Mexico"): (25.67, -100.24),
+    ("Zapopan", "Mexico"): (20.68, -103.46),
+}
+
+# --- WC2026 host-venue climate (late June - July) --------------------------
+VENUE_CLIMATE: dict[tuple[str, str], tuple[int, int]] = {
+    ("Arlington", "United States"): (36, 50),
+    ("Atlanta", "United States"): (31, 65),
+    ("East Rutherford", "United States"): (29, 65),
+    ("Foxborough", "United States"): (27, 65),
+    ("Houston", "United States"): (34, 75),
+    ("Inglewood", "United States"): (26, 65),
+    ("Kansas City", "United States"): (32, 60),
+    ("Miami Gardens", "United States"): (32, 72),
+    ("Philadelphia", "United States"): (30, 65),
+    ("Santa Clara", "United States"): (28, 55),
+    ("Seattle", "United States"): (24, 60),
+    ("Toronto", "Canada"): (26, 65),
+    ("Vancouver", "Canada"): (22, 65),
+    ("Mexico City", "Mexico"): (23, 55),
+    ("Guadalupe", "Mexico"): (35, 55),
+    ("Zapopan", "Mexico"): (28, 50),
+}
+
+
 def write_csv(path, header, rows):
     with open(path, "w", newline="", encoding="utf-8") as f:
         w = csv.writer(f)
@@ -147,6 +219,21 @@ def main():
         os.path.join(REF, "market_values.csv"),
         ["team", "squad_value_eur_m", "as_of"],
         [[t, v, "2026-06"] for t, v in sorted(MARKET_VALUES.items())],
+    )
+    write_csv(
+        os.path.join(REF, "team_climate.csv"),
+        ["team", "home_temp_c", "home_humidity"],
+        [[t, tp, h] for t, (tp, h) in sorted(TEAM_CLIMATE.items())],
+    )
+    write_csv(
+        os.path.join(REF, "venue_climate.csv"),
+        ["city", "country", "temp_c", "humidity"],
+        [[c, co, tp, h] for (c, co), (tp, h) in sorted(VENUE_CLIMATE.items())],
+    )
+    write_csv(
+        os.path.join(REF, "venue_coords.csv"),
+        ["city", "country", "lat", "lon"],
+        [[c, co, la, lo] for (c, co), (la, lo) in sorted(VENUE_COORDS.items())],
     )
 
 
