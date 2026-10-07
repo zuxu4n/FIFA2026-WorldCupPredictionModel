@@ -1,35 +1,45 @@
 """Import a historical FIFA-ranking dump into data/reference/fifa_rankings.csv.
 
-    python scripts/import_fifa_rankings.py [PATH]
+    python scripts/import_fifa_rankings.py PATH
 
-PATH may be a .zip (e.g. the Dato-Futbol/fifa-ranking repo download) or a .csv.
-Default: the Dato-Futbol dump in your Downloads folder.
+PATH may be a .zip (e.g. a download of github.com/Dato-Futbol/fifa-ranking) or a .csv.
 
 It maps the ranking source's team spellings onto the match-dataset spellings
 (IR Iran -> Iran, USA -> United States, Korea Republic -> South Korea, ...),
 derives a per-date rank, and writes the schema the pipeline expects:
     date, team, rank, total_points
 """
+
 from __future__ import annotations
+
 import io
 import os
 import sys
 import zipfile
+
 import pandas as pd
 
-from wcpred import data as D
 from wcpred import config as C
+from wcpred.data import load_results, normalize_name
 
-DEFAULT_PATH = os.path.expanduser(r"~\Downloads\fifa-ranking-master.zip")
+OUT = C.PATHS.reference_dir / "fifa_rankings.csv"
 
 # FIFA-ranking spelling (accent-stripped) -> match-dataset spelling
 ALIASES = {
-    "Cabo Verde": "Cape Verde", "Cape Verde Islands": "Cape Verde",
-    "Congo DR": "DR Congo", "IR Iran": "Iran", "Cote d'Ivoire": "Ivory Coast",
-    "Korea Republic": "South Korea", "Korea DPR": "North Korea",
-    "USA": "United States", "Turkiye": "Turkey", "Czechia": "Czech Republic",
-    "Chinese Taipei": "Taiwan", "Kyrgyz Republic": "Kyrgyzstan",
-    "Brunei Darussalam": "Brunei", "St. Kitts and Nevis": "Saint Kitts and Nevis",
+    "Cabo Verde": "Cape Verde",
+    "Cape Verde Islands": "Cape Verde",
+    "Congo DR": "DR Congo",
+    "IR Iran": "Iran",
+    "Cote d'Ivoire": "Ivory Coast",
+    "Korea Republic": "South Korea",
+    "Korea DPR": "North Korea",
+    "USA": "United States",
+    "Turkiye": "Turkey",
+    "Czechia": "Czech Republic",
+    "Chinese Taipei": "Taiwan",
+    "Kyrgyz Republic": "Kyrgyzstan",
+    "Brunei Darussalam": "Brunei",
+    "St. Kitts and Nevis": "Saint Kitts and Nevis",
 }
 
 
@@ -48,8 +58,10 @@ def _read_any(path: str) -> pd.DataFrame:
     return pd.read_csv(path, encoding="utf-8")
 
 
-def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH
+def main() -> None:
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    path = sys.argv[1]
     if not os.path.exists(path):
         sys.exit(f"file not found: {path}")
     df = _read_any(path)
@@ -59,8 +71,7 @@ def main():
         df = df.rename(columns={cols["points"]: "total_points"})
     for need in ("team", "total_points", "date"):
         if need not in df.columns:
-            sys.exit(f"source is missing required column '{need}' "
-                     f"(has: {list(df.columns)})")
+            sys.exit(f"source is missing required column '{need}' (has: {list(df.columns)})")
 
     df = df[["team", "total_points", "date"]].copy()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -68,26 +79,29 @@ def main():
     df = df.dropna(subset=["date", "total_points"])
 
     # normalise team names onto the match-dataset spelling
-    df["team"] = df["team"].map(D.strip_accents).map(lambda t: ALIASES.get(t, t))
+    df["team"] = df["team"].map(normalize_name).map(lambda t: ALIASES.get(t, t))
     # derive rank within each ranking snapshot
-    df["rank"] = (df.groupby("date")["total_points"]
-                  .rank(ascending=False, method="min").astype(int))
+    df["rank"] = df.groupby("date")["total_points"].rank(ascending=False, method="min").astype(int)
     df = df.sort_values(["date", "rank"])[["date", "team", "rank", "total_points"]]
 
     df["date"] = df["date"].dt.date
-    df.to_csv(C.FIFA_RANKINGS_CSV, index=False, encoding="utf-8")
-    print(f"wrote {C.FIFA_RANKINGS_CSV}  ({len(df):,} rows, "
-          f"{df['date'].nunique()} snapshots, "
-          f"{df['date'].min()} -> {df['date'].max()})")
+    df.to_csv(OUT, index=False, encoding="utf-8")
+    print(
+        f"wrote {OUT}  ({len(df):,} rows, "
+        f"{df['date'].nunique()} snapshots, "
+        f"{df['date'].min()} -> {df['date'].max()})"
+    )
 
     # coverage report against the WC2026 finalists
-    res = D.load_results()
-    fin = res[(res.tournament == C.WC_TOURNAMENT_NAME) & (res.date >= "2026-06-01")]
+    res = load_results()
+    fin = res[(res.tournament == C.WORLD_CUP) & (res.date >= "2026-06-01")]
     wc = sorted(set(fin.home_team) | set(fin.away_team))
-    have = set(df["team"].map(D.strip_accents))
-    missing = [t for t in wc if D.strip_accents(t) not in have]
-    print(f"WC2026 coverage: {len(wc) - len(missing)}/{len(wc)} matched"
-          + (f"; still missing: {missing}" if missing else " (all matched)"))
+    have = set(df["team"].map(normalize_name))
+    missing = [t for t in wc if normalize_name(t) not in have]
+    print(
+        f"WC2026 coverage: {len(wc) - len(missing)}/{len(wc)} matched"
+        + (f"; still missing: {missing}" if missing else " (all matched)")
+    )
 
 
 if __name__ == "__main__":

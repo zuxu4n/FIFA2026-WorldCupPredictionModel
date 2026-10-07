@@ -1,119 +1,71 @@
-# Data — what's here and how to provide your own
+# Data
 
-The model needs four kinds of data. **Only `results.csv` is required**, and it is
-fetched automatically. Everything else has working starter data baked in and can
-be improved by replacing a CSV — nothing in the code changes.
+Two kinds of data: the match results (downloaded, not committed) and small
+reference tables (committed). Everything the model uses is listed here with its
+source and how much to trust it.
 
-| Data | File | Status | How to improve |
-|------|------|--------|----------------|
-| International match results (1872→now, incl. WC2026 so far) | `raw/results.csv` | ✅ auto-fetched, live | `python scripts/fetch_data.py` to refresh |
-| Squad market values | `reference/market_values.csv` | ⚠️ **approximate** starter values | replace with Transfermarkt numbers (below) |
-| FIFA rankings | `reference/fifa_rankings.csv` | ➖ optional, not present | add the file to enable rank features |
-| Venue & team altitude | `reference/venues.csv`, `reference/team_meta.csv` | ✅ curated for WC2026 | refine elevations if you like |
+## Match results (`data/raw/`, downloaded)
 
----
+```bash
+wcpred fetch-data              # pinned commit, SHA-256 verified
+wcpred fetch-data --ref master # latest upstream data (results will differ from the README)
+```
 
-## 1. `raw/results.csv`  (required — auto-fetched)
+| File | Source | Contents |
+|---|---|---|
+| `results.csv` | [martj42/international_results](https://github.com/martj42/international_results) (CC0), commit `b7a3a8e` (2026-10-07) | 49,945 international matches, 1872-11-30 to 2026-10-06, 337 teams |
+| `shootouts.csv` | same | penalty-shootout winners (used to lock drawn knockout matches) |
 
-Source: [martj42/international_results](https://github.com/martj42/international_results),
-updated continually (it already contains the in-progress World Cup — played
-matches have scores, upcoming fixtures have blank scores).
-
-Schema (don't change it — the loader expects these columns):
+Schema of `results.csv` (rows with blank scores are treated as scheduled fixtures):
 
 ```
 date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
-2026-06-27,Panama,England,,,FIFA World Cup,East Rutherford,United States,TRUE
+2026-07-19,Spain,Argentina,1,0,FIFA World Cup,East Rutherford,United States,TRUE
 ```
 
-`home_score`/`away_score` blank = an upcoming fixture to predict. `neutral=TRUE`
-means it's not played at the home team's ground (all WC2026 games are neutral,
-but `country` still identifies host nations for the host-advantage feature).
+Elo ratings are computed over all 49,945 matches; the model trains on the 32,821
+played since 1990.
 
-**Offline?** Drop a CSV with this schema at `data/raw/results.csv` yourself.
+## Reference tables (`data/reference/`, committed)
 
-## 2. `reference/market_values.csv`  (you should improve this)
+| File | Rows | Source | Reliability |
+|---|---:|---|---|
+| `wc2026_groups_official.csv` | 48 | [openfootball/world-cup](https://github.com/openfootball/world-cup) `2026--usa/cup.txt` | exact |
+| `wc2026_bracket.csv` | 32 | openfootball `2026--usa/cup_finals.txt`: match numbers, dates, venues, slot codes | exact (checked against the played knockout matches) |
+| `wc2026_third_place_table.csv` | 495 | FIFA World Cup 2026 regulations, Annex C, via the Wikipedia template (`scripts/import_third_place_table.py`) | exact (validated against bracket eligibility and the real 2026 case) |
+| `fifa_rankings.csv` | 67,883 | [Dato-Futbol/fifa-ranking](https://github.com/Dato-Futbol/fifa-ranking) (`scripts/import_fifa_rankings.py`) | real, but ends 2024-09-19: later matches reuse the last snapshot |
+| `squad_ages.csv` | 537 | openfootball World Cup squad lists 1930-2026 (`scripts/import_squads.py`) | real; only used for World Cup matches of that year |
+| `team_meta.csv` | 64 | hand-curated (`scripts/make_reference_data.py`) | confederation exact; home altitude approximate |
+| `venues.csv` | 32 | hand-curated | approximate stadium altitudes |
+| `team_climate.csv` | 64 | hand-curated | **approximate** warm-season temperature/humidity |
+| `venue_climate.csv` | 16 | hand-curated | **approximate** June-July normals for the 2026 venues |
+| `market_values.csv` | 59 | hand-transcribed from a June 2026 article citing Transfermarkt; non-finalists are rough estimates | **approximate, single snapshot; not used by default** |
 
-This is the **single most valuable thing you can provide.** The committed file has
-*approximate* squad market values; replace them with real
-[Transfermarkt](https://www.transfermarkt.com/) "Market value of the squad"
-figures (in € millions) for sharper predictions.
+### Known gaps
 
-```
-team,squad_value_eur_m,as_of
-France,1300,2026-06
-Panama,40,2026-06
-```
+- `team_meta.csv` and the climate tables cover only 64 teams. The other teams in
+  the results get an "unknown" confederation and default altitude/climate values.
+- Venue lookups fall back from the exact (city, country) to the host country's
+  own conditions, then the home team's, then a default. Most historical matches
+  therefore get country-level approximations.
+- Climate normals are applied regardless of season (a January friendly in Texas
+  gets the June value).
 
-Use the exact team names from `results.csv` (accents are handled automatically,
-e.g. `Curacao` ≈ `Curaçao`). Teams you omit are simply treated as "unknown"
-(the model handles missing values natively).
+### Why market value is off by default
 
-## 3. `reference/fifa_rankings.csv`  (optional — now populated)
+There is only one snapshot (June 2026). Using it as a feature for a 1995 or 2021
+match tells the model how strong a team *would become*, which is look-ahead
+leakage. It also marks the 48 eventual qualifiers, since they are the teams with
+values. The feature group is kept for experiments (`--include market_value`), and
+its effect is reported in the ablation in [`docs/methodology.md`](../docs/methodology.md).
 
-Switches on the FIFA-ranking features (an as-of join on ranking points). Schema:
+## Regenerating reference data
 
-```
-date,team,rank,total_points
-2026-04-03,Argentina,1,1886.16
-```
-
-Populated from the [Dato-Futbol/fifa-ranking](https://github.com/Dato-Futbol/fifa-ranking)
-historical dump (Dec 1992 → Sept 2024, 335 snapshots) via:
-
-```
-python scripts/import_fifa_rankings.py path/to/fifa-ranking-master.zip
-```
-
-The importer maps the ranking source's team spellings onto the match-dataset
-spellings (IR Iran → Iran, USA → United States, Korea Republic → South Korea, …)
-and derives a per-date rank. A point-in-time/as-of join is used, so more
-snapshots = better; note this dump ends 2024-09, so recent matches reuse the
-last snapshot as a slow-moving prior. **Honest note:** ranking points correlate
-strongly with Elo, so this is ranked high in feature importance but adds little
-incremental accuracy on top of Elo.
-
-## 3b. `reference/squad_ages.csv`  (optional — populated)
-
-Average squad age per `(tournament year, team)` for every World Cup 1930→2026,
-imported from the [openfootball](https://github.com/openfootball/world-cup)
-squad rosters:
-
-```
-python scripts/import_squads.py path/to/worldcup-master.zip
+```bash
+python scripts/make_reference_data.py            # curated tables (team_meta, venues, climate, market values)
+python scripts/import_fifa_rankings.py PATH      # PATH: Dato-Futbol/fifa-ranking zip or csv
+python scripts/import_squads.py PATH             # PATH: openfootball/world-cup zip or folder
+python scripts/import_third_place_table.py       # downloads the Annex C table
 ```
 
-Joined to matches by tournament year (2014 ages for 2014 matches, 2026 for
-2026), so it carries no future leakage. **Honest note:** only World Cup matches
-get a value, so it's a weak, low-coverage signal — the model uses it at modest
-importance but it barely moves validation.
-
-## 3c. `reference/injuries.csv`  (optional, manual)
-
-Squad market value currently unavailable per team, in EUR millions:
-
-```
-team,value_out_eur_m,note
-France,180,Mbappe hamstring; Saliba suspended
-```
-
-Applied at predict time by reducing the team's squad-value feature — no retrain
-needed. Clear the rows (keep the header) when players return.
-
-## 3d. `reference/weather_overrides.csv`  (auto-generated)
-
-Real forecast conditions for upcoming fixtures, written by
-`python scripts/fetch_weather.py` (Open-Meteo, free, keyless). The climate
-resolver prefers these per-date values over the seasonal normals. Re-run it
-whenever fixtures change; stale dates are simply never matched.
-
-## 4. `reference/venues.csv` & `reference/team_meta.csv`  (curated)
-
-- `venues.csv` — `(city, country) → altitude_m`. All 16 WC2026 host venues plus
-  famous high-altitude football cities (La Paz, Quito, Bogotá…). The altitude /
-  acclimatisation feature uses the gap between a match's elevation and the
-  visiting side's usual home elevation.
-- `team_meta.csv` — `team → confederation, home_altitude_m`.
-
-Regenerate or edit both with `python scripts/make_reference_data.py` (the numbers
-live in that script, fully editable).
+All team names are accent-stripped on load (`Curaçao` and `Curacao` match).

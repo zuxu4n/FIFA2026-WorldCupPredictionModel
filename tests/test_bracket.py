@@ -1,48 +1,64 @@
-"""Tests for the official 2026 bracket parser + structure."""
-import os
+import dataclasses
+
 import pytest
-from wcpred.bracket import (
-    load_bracket, third_slots, load_official_groups, FINALS_TXT, GROUPS_CSV,
-)
 
-pytestmark = pytest.mark.skipif(
-    not (os.path.exists(FINALS_TXT) and os.path.exists(GROUPS_CSV)),
-    reason="official bracket not imported (run scripts/import_bracket.py)",
-)
+from wcpred.data import DataError
 
 
-def test_bracket_has_32_matches():
-    b = load_bracket()
-    assert len(b) == 32
-    assert min(b) == 73 and max(b) == 104
+def test_format_structure(wc_format):
+    assert len(wc_format.teams) == 48
+    rounds = [m.round for m in wc_format.matches]
+    assert [rounds.count(r) for r in ("R32", "R16", "QF", "SF", "3P", "Final")] == [
+        16,
+        8,
+        4,
+        2,
+        1,
+        1,
+    ]
+    final = wc_format.matches[-1]
+    assert (final.number, final.home_slot, final.away_slot) == (104, "W101", "W102")
+    third_place = next(m for m in wc_format.matches if m.round == "3P")
+    assert {third_place.home_slot, third_place.away_slot} == {"L101", "L102"}
 
 
-def test_r32_slot_counts():
-    b = load_bracket()
-    winners = runners = thirds = 0
-    for no in range(73, 89):
-        for r in (b[no].left, b[no].right):
-            if r.kind == "pos" and r.place == 1:
-                winners += 1
-            elif r.kind == "pos" and r.place == 2:
-                runners += 1
-            elif r.kind == "third":
-                thirds += 1
-    assert (winners, runners, thirds) == (12, 12, 8)
+def test_every_team_can_only_come_from_one_slot(wc_format):
+    r32 = [s for m in wc_format.matches if m.round == "R32" for s in (m.home_slot, m.away_slot)]
+    assert len(r32) == len(set(r32)) == 32
+    assert sum(s.startswith("3") for s in r32) == 8
 
 
-def test_final_references_semifinal_winners():
-    b = load_bracket()
-    assert b[104].left.kind == "winner" and b[104].right.kind == "winner"
-    assert {b[104].left.match, b[104].right.match} == {101, 102}
+def test_official_third_place_allocation_for_2026(wc_format):
+    # The real 2026 case: thirds from B, D, E, F, I, J, K, L qualified (FIFA option 67).
+    assignment = wc_format.third_place_table["BDEFIJKL"]
+    assert assignment == {
+        "1A": "E",
+        "1B": "J",
+        "1D": "B",
+        "1E": "D",
+        "1G": "I",
+        "1I": "F",
+        "1K": "L",
+        "1L": "K",
+    }
 
 
-def test_eight_third_slots():
-    assert len(third_slots(load_bracket())) == 8
+def test_third_place_table_respects_eligibility(wc_format):
+    # validate() already enforces this on load; spot-check the slot sets themselves
+    slots = dict(wc_format.third_place_slots())
+    assert slots["1E"] == "3ABCDF"
+    for assignment in list(wc_format.third_place_table.values())[:50]:
+        for winner, group in assignment.items():
+            assert group in slots[winner][1:]
 
 
-def test_official_groups_complete():
-    g = load_official_groups()
-    assert len(g) == 12
-    assert all(len(v) == 4 for v in g.values())
-    assert sum(len(v) for v in g.values()) == 48
+def test_validation_rejects_bad_data(wc_format):
+    groups = dict(wc_format.groups)
+    groups["A"] = groups["A"][:3]
+    with pytest.raises(DataError, match="12 groups"):
+        dataclasses.replace(wc_format, groups=groups).validate()
+
+    matches = list(wc_format.matches)
+    matches[-1] = dataclasses.replace(matches[-1], home_slot="W104")
+    with pytest.raises(DataError, match="later match"):
+        dataclasses.replace(wc_format, matches=tuple(matches)).validate()

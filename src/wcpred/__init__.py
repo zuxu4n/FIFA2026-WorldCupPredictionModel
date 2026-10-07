@@ -1,2 +1,3 @@
-"""World Cup match predictor: XGBoost Poisson expected-goals -> W/D/L odds."""
-__version__ = "0.1.0"
+"""International football match prediction and World Cup simulation."""
+
+__version__ = "0.2.0"

@@ -1,14 +1,22 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 *.egg-info/
+.venv/
+venv/
+build/
+dist/
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# large/generated artifacts
-data/raw/*.csv
-models/*.json
-outputs/*.csv
+# Downloaded data and generated files (all reproducible via the wcpred CLI)
+data/raw/
+artifacts/
+outputs/
 
-# keep curated reference data and folder structure
-!data/reference/*.csv
-!.gitkeep
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

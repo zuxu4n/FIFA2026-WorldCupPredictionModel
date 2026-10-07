@@ -1,31 +1,34 @@
 """Import squad rosters (all World Cups) -> data/reference/squad_ages.csv.
 
-    python scripts/import_squads.py [PATH]
+    python scripts/import_squads.py PATH
 
-PATH is the openfootball world-cup zip or extracted dir (must contain
-more/<year>_squads.txt files). Default: the zip in Downloads.
+PATH is a download of github.com/openfootball/world-cup (zip or extracted dir);
+it must contain the more/<year>_squads.txt files.
 
 For every (tournament year, team) it computes the average player age at that
 tournament (and the age spread), so the feature can be joined *temporally* to
 historical matches without leakage. Schema:
     year, team, avg_age, age_std, n_players
 """
+
 from __future__ import annotations
+
 import datetime as dt
 import os
 import re
 import sys
 import zipfile
 
-from wcpred import data as D
 from wcpred import config as C
+from wcpred.data import normalize_name
 
-DEFAULT_PATH = os.path.expanduser(r"~\Downloads\worldcup-master (1).zip")
-OUT = os.path.join(C.DATA_REF, "squad_ages.csv")
+OUT = C.PATHS.reference_dir / "squad_ages.csv"
 
 ALIASES = {
-    "USA": "United States", "Bosnia & Herzegovina": "Bosnia and Herzegovina",
-    "Korea Republic": "South Korea", "IR Iran": "Iran",
+    "USA": "United States",
+    "Bosnia & Herzegovina": "Bosnia and Herzegovina",
+    "Korea Republic": "South Korea",
+    "IR Iran": "Iran",
     "Republic of Ireland": "Ireland",
 }
 HEADER_RE = re.compile(r"^==\s*(.+?)\s*(?:#.*)?$")
@@ -56,7 +59,8 @@ def _squad_files(path: str) -> list[tuple[int, str]]:
             for f in files:
                 m = rx.search(f)
                 if m:
-                    out.append((int(m.group(1)), _decode(open(os.path.join(root, f), "rb").read())))
+                    with open(os.path.join(root, f), "rb") as fh:
+                        out.append((int(m.group(1)), _decode(fh.read())))
     return sorted(out)
 
 
@@ -73,14 +77,14 @@ def _parse(year: int, text: str) -> list[tuple[str, float]]:
         if team and ages:
             mean = sum(ages) / len(ages)
             var = sum((a - mean) ** 2 for a in ages) / len(ages)
-            rows.append((team, round(mean, 2), round(var ** 0.5, 2), len(ages)))
+            rows.append((team, round(mean, 2), round(var**0.5, 2), len(ages)))
 
     for line in text.splitlines():
         h = HEADER_RE.match(line)
         if h:
             flush()
             name = ALIASES.get(h.group(1).strip(), h.group(1).strip())
-            team, ages = D.strip_accents(name), []
+            team, ages = normalize_name(name), []
             continue
         b = BIRTH_RE.search(line)
         if b and team:
@@ -94,8 +98,10 @@ def _parse(year: int, text: str) -> list[tuple[str, float]]:
     return rows
 
 
-def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH
+def main() -> None:
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    path = sys.argv[1]
     if not os.path.exists(path):
         sys.exit(f"path not found: {path}")
     files = _squad_files(path)
@@ -109,16 +115,21 @@ def main():
             for team, avg, std, n in _parse(year, text):
                 f.write(f"{year},{team},{avg},{std},{n}\n")
                 n_rows += 1
-    print(f"wrote {OUT}  ({n_rows} (year,team) rows across {len(files)} tournaments: "
-          f"{files[0][0]}-{files[-1][0]})")
+    print(
+        f"wrote {OUT}  ({n_rows} (year,team) rows across {len(files)} tournaments: "
+        f"{files[0][0]}-{files[-1][0]})"
+    )
 
     # quick look at 2026
     import pandas as pd
+
     df = pd.read_csv(OUT)
     cur = df[df.year == 2026].sort_values("avg_age")
-    print(f"\n2026 squads: {len(cur)} teams, mean age "
-          f"{cur.avg_age.mean():.1f} (youngest {cur.iloc[0].team} {cur.iloc[0].avg_age}, "
-          f"oldest {cur.iloc[-1].team} {cur.iloc[-1].avg_age})")
+    print(
+        f"\n2026 squads: {len(cur)} teams, mean age "
+        f"{cur.avg_age.mean():.1f} (youngest {cur.iloc[0].team} {cur.iloc[0].avg_age}, "
+        f"oldest {cur.iloc[-1].team} {cur.iloc[-1].avg_age})"
+    )
 
 
 if __name__ == "__main__":

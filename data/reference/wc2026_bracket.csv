@@ -1,0 +1,33 @@
+match,round,date,home_slot,away_slot,city,country
+73,R32,2026-06-28,2A,2B,Inglewood,United States
+74,R32,2026-06-29,1E,3ABCDF,Foxborough,United States
+75,R32,2026-06-29,1F,2C,Guadalupe,Mexico
+76,R32,2026-06-29,1C,2F,Houston,United States
+77,R32,2026-06-30,1I,3CDFGH,East Rutherford,United States
+78,R32,2026-06-30,2E,2I,Arlington,United States
+79,R32,2026-06-30,1A,3CEFHI,Mexico City,Mexico
+80,R32,2026-07-01,1L,3EHIJK,Atlanta,United States
+81,R32,2026-07-01,1D,3BEFIJ,Santa Clara,United States
+82,R32,2026-07-01,1G,3AEHIJ,Seattle,United States
+83,R32,2026-07-02,2K,2L,Toronto,Canada
+84,R32,2026-07-02,1H,2J,Inglewood,United States
+85,R32,2026-07-02,1B,3EFGIJ,Vancouver,Canada
+86,R32,2026-07-03,1J,2H,Miami Gardens,United States
+87,R32,2026-07-03,1K,3DEIJL,Kansas City,United States
+88,R32,2026-07-03,2D,2G,Arlington,United States
+89,R16,2026-07-04,W74,W77,Philadelphia,United States
+90,R16,2026-07-04,W73,W75,Houston,United States
+91,R16,2026-07-05,W76,W78,East Rutherford,United States
+92,R16,2026-07-05,W79,W80,Mexico City,Mexico
+93,R16,2026-07-06,W83,W84,Arlington,United States
+94,R16,2026-07-06,W81,W82,Seattle,United States
+95,R16,2026-07-07,W86,W88,Atlanta,United States
+96,R16,2026-07-07,W85,W87,Vancouver,Canada
+97,QF,2026-07-09,W89,W90,Foxborough,United States
+98,QF,2026-07-10,W93,W94,Inglewood,United States
+99,QF,2026-07-11,W91,W92,Miami Gardens,United States
+100,QF,2026-07-11,W95,W96,Kansas City,United States
+101,SF,2026-07-14,W97,W98,Arlington,United States
+102,SF,2026-07-15,W99,W100,Atlanta,United States
+103,3P,2026-07-18,L101,L102,Miami Gardens,United States
+104,Final,2026-07-19,W101,W102,East Rutherford,United States
