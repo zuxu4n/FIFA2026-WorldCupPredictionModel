@@ -32,9 +32,7 @@ def _date(value: str) -> pd.Timestamp:
 def _training_config(args: argparse.Namespace) -> TrainingConfig:
     groups = [g for g in C.DEFAULT_FEATURE_GROUPS if g not in args.exclude]
     groups += [g for g in args.include if g not in groups]
-    return TrainingConfig(
-        feature_groups=tuple(groups), calibrate_totals=args.totals_calibration
-    )
+    return TrainingConfig(feature_groups=tuple(groups), calibrate_totals=args.totals_calibration)
 
 
 # ---------------------------------------------------------------- commands

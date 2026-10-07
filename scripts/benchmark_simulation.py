@@ -35,8 +35,11 @@ def main() -> None:
             start = time.perf_counter()
             simulate_world_cup(results, fmt, predictor, n_runs=n, seed=0, shootouts=shootouts)
             timings.append(time.perf_counter() - start)
-        print(f"{n:>7,} runs: best {min(timings):6.2f}s  (all: "
-              + ", ".join(f"{t:.2f}" for t in timings) + ")")
+        print(
+            f"{n:>7,} runs: best {min(timings):6.2f}s  (all: "
+            + ", ".join(f"{t:.2f}" for t in timings)
+            + ")"
+        )
 
 
 if __name__ == "__main__":
